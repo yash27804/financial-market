@@ -28,7 +28,7 @@ This tool uses a state-machine algorithm to track market structure shifts:
 *Figure 1: Streamlit Layout for Ticker Input and TimeFrame Selection.*
 
 ![SMC Structure Example 2](bearish_smc_mapper_2.png)
-*Figure 2: Real-time mapping of structural points on Nifty 50 data.*
+*Figure 2: Real-time mapping of structural points on Bharti Hexacom .*
 
 ---
 
