@@ -67,7 +67,6 @@ def find_smc(data):
     df['is_bos'] = (df['Close'] < df['bos_level']) & (df['active_ll'].notna())
     
     df=choch(df)
-    st.dataframe(df)
     return df
 
 @st.cache_data(ttl=24*3600)
@@ -408,3 +407,4 @@ if(sbtn):
                          st.session_state.timeframe)
             else:
                 st.error("Invalid Ticker")
+
