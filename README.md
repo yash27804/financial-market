@@ -46,7 +46,7 @@ To filter "false breakouts" by validating price trends with volume flow analysis
 ---
 
 ## 3. Portfolio Beta & Risk Calculator
-**File:** `beta_calculator.ipynb`
+**File:** `beta_calculator.py`
 
 ### 🛡️ Objective
 To quantify portfolio exposure and systematic risk against the benchmark index (Nifty 50).
