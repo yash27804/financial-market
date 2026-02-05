@@ -25,7 +25,7 @@ This tool uses a state-machine algorithm to track market structure shifts:
 *(These charts are generated automatically by the script)*
 
 ![SMC Structure Example 1](bearish_smc_mapper_1.png)
-*Figure 1: Detection of Inducement sweep followed by a structural Break of Structure (BOS).*
+*Figure 1: Streamlit Layout for Ticker Input and TimeFrame Selection.*
 
 ![SMC Structure Example 2](bearish_smc_mapper_2.png)
 *Figure 2: Real-time mapping of structural points on Nifty 50 data.*
