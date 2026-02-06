@@ -67,7 +67,74 @@ def find_smc(data):
     df['is_bos'] = (df['Close'] < df['bos_level']) & (df['active_ll'].notna())
     
     df=choch(df)
+    st.dataframe(df)
     return df
+
+@st.cache_data(ttl=24*3600)
+def confirmed_low_weak_low(df):
+    data = df.copy()
+    data['inducement_high'] = data['High'].rolling(window=5).max().where(data['signal']).ffill()
+    
+    
+    starts = data[data['signal'] == True]
+    data['inducement_sweep'] = (data['High'].where(~data['signal']) > data['inducement_high'].shift(1)).fillna(False)
+    ends = data[data['inducement_sweep'] == True]
+    st.header("Start Dates")
+    st.dataframe(starts)
+    st.header("End Dates")
+    st.dataframe(ends)
+    last_sweep_date = pd.Timestamp.min
+    data['confirmed_ll'] = np.nan
+    data['weak_ll'] = np.nan
+
+    for start_date, start_row in starts.iterrows():
+        if start_date < last_sweep_date:
+            continue
+            
+        
+        loc = data.index.get_loc(start_date)
+        start_search = max(0, loc - 4)
+        window = data.iloc[start_search : loc + 1]
+        ind_date = window['High'].idxmax()
+        ind_val = window['High'].max()
+
+     
+        valid_ends = ends[(ends.index > start_date) & (ends['High'] > ind_val)]
+        
+        found_valid_sweep = False
+
+        if not valid_ends.empty:
+            for end_date, end_row in valid_ends.iterrows():
+                
+               
+                newer_signals = starts[(starts.index > start_date) & (starts.index < end_date)]
+                
+                if not newer_signals.empty:
+                    break 
+                
+              
+                analysis_range = data.loc[ind_date : end_date]
+                if not analysis_range.empty:
+                    range_min = analysis_range['Low'].min()
+                    range_min_date = analysis_range['Low'].idxmin()
+                    
+                    data.loc[range_min_date, 'confirmed_ll'] = range_min
+                    last_sweep_date = end_date
+                    found_valid_sweep = True
+                    break 
+
+        
+        if not found_valid_sweep:
+            
+            next_signals = starts[starts.index > start_date]
+            if next_signals.empty and ind_date > last_sweep_date:
+                active_range = data.loc[ind_date:]
+                if not active_range.empty:
+                    current_min = active_range['Low'].min()
+                    weak_date = active_range['Low'].idxmin()
+                    data.loc[weak_date, 'weak_ll'] = current_min
+
+    return data
 
 @st.cache_data(ttl=24*3600)
 def filter_ind(df):
@@ -87,38 +154,6 @@ def filter_ind(df):
             pass
             
     return inducement_price,inducement_date
-
-def confirmed_low_weak_low(df):
-    
-    data=df.copy()
-    data['inducement_high']=data['High'].rolling(window=5).max().where(data['signal']).ffill()
-    starts=data[data['inducement_high'].notnull()].drop_duplicates(subset=['inducement_high'])
-    data['inducement_sweep']=(data['High'].where(~data['signal'])>data['inducement_high'].shift(1)).fillna(False)
-    ends=data[data['inducement_sweep']==True]
-    
-    last_sweep_date=pd.Timestamp.min
-    data['confirmed_ll']=np.nan
-    data['weak_ll']=np.nan
-
-    for start_date,start_row in starts.iterrows():
-        if start_date < last_sweep_date:
-            continue
-        valid_ends=ends[ends.index > start_date]
-
-        if not valid_ends.empty:
-            end_date= valid_ends.index[0]
-            range_min=data.loc[start_date:end_date]['Low'].min()
-            range_min_date=data.loc[start_date:end_date]['Low'].idxmin()
-            data.loc[range_min_date,'confirmed_ll']=range_min
-            last_sweep_date=end_date
-        else:
-            active_range=data.loc[start_date:]
-            if not active_range.empty:
-                current_range_min=active_range['Low'].min()
-                weak_date=active_range['Low'].idxmin()
-                data.loc[weak_date,'weak_ll']=current_range_min
-
-    return data
 
 @st.cache_data(ttl=24*3600)
 def choch(df):
@@ -168,9 +203,8 @@ def filter_bos(df):
     if not bos.empty:
         last_bos=bos.iloc[-1]
         bos_date=df.index.where(df['confirmed_ll']==last_bos['bos_level']).dropna()
-        bos_date=bos_date[-1]
-        st.write(bos_date)
-        return last_bos['bos_level'], bos_date
+        if not bos_date.empty:
+            return last_bos['bos_level'], bos_date[-1]
     return None, None
 
 @st.cache_data(ttl=24*3600)
@@ -327,7 +361,7 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
                                y=bos_price, 
                                text=f"BOS:{bos_price}",
                                showarrow=False, 
-                               xanchor="left",
+                               xanchor="left", 
                                xshift=60, 
                                yshift=-35, 
                                font=dict(color="Blue", size=17))
@@ -343,10 +377,10 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
                       margin=dict(l=10, r=150, t=10, b=10)) 
     
     fig.update_xaxes(type="category",
-                     categoryorder='trace', 
-                     tickangle=-45,
-                     nticks=20,
-                     tickfont=dict(size=10))
+                      categoryorder='trace', 
+                      tickangle=-45,
+                      nticks=20,
+                      tickfont=dict(size=10))
     st.plotly_chart(fig, config={'scrollZoom': True}, use_container_width=True)
 
 ticker=st.text_input("Enter ticker of Stock:")
@@ -407,5 +441,3 @@ if(sbtn):
                          st.session_state.timeframe)
             else:
                 st.error("Invalid Ticker")
-
-
