@@ -219,7 +219,7 @@ def filter_ll(df):
 def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date, ll_type, bos_price, bos_date,choch_price,choch_date,timeframe):
     st.subheader(f"CandleStick Chart of {ticker}")
     
-    # --- FIX 2: Dynamic Date Formatting for 1H/4H ---
+    
     if timeframe in ['1h','4h']:
         date_fmt = '%d %b %y, %H:%M'
     else:
@@ -407,4 +407,5 @@ if(sbtn):
                          st.session_state.timeframe)
             else:
                 st.error("Invalid Ticker")
+
 
