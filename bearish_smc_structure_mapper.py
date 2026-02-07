@@ -67,7 +67,7 @@ def find_smc(data):
     df['is_bos'] = (df['Close'] < df['bos_level']) & (df['active_ll'].notna())
     
     df=choch(df)
-    st.dataframe(df)
+    #st.dataframe(df)
     return df
 
 @st.cache_data(ttl=24*3600)
@@ -80,9 +80,8 @@ def confirmed_low_weak_low(df):
     data['inducement_sweep'] = (data['High'].where(~data['signal']) > data['inducement_high'].shift(1)).fillna(False)
     ends = data[data['inducement_sweep'] == True]
     st.header("Start Dates")
-    st.dataframe(starts)
     st.header("End Dates")
-    st.dataframe(ends)
+  
     last_sweep_date = pd.Timestamp.min
     data['confirmed_ll'] = np.nan
     data['weak_ll'] = np.nan
@@ -441,3 +440,4 @@ if(sbtn):
                          st.session_state.timeframe)
             else:
                 st.error("Invalid Ticker")
+
