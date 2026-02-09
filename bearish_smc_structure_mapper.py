@@ -55,7 +55,8 @@ def find_smc(data):
     df['signal'] = df['is_break_candle'] & df['any_recent_sweep']
     
     df=confirmed_low_weak_low(df)
-    df['active_ll']=df['confirmed_ll'].ffill()
+    temp_min=df['confirmed_ll'].ffill()
+    df['active_ll']=temp_min.cummin()
     df['is_bos'] = (df['Close'] < df['active_ll']) & (df['active_ll'].notna())
     
     df=choch(df)
@@ -73,7 +74,8 @@ def confirmed_low_weak_low(df):
     last_sweep_date = pd.Timestamp.min
     data['confirmed_ll'] = np.nan
     data['weak_ll'] = np.nan
-    last_min_confirmed_low=data.iloc[:,df.columns.get_loc('High')].max()
+    data['major_confirmed_low']=np.nan
+    last_min_confirmed_low=data['High'].max()
     for start_date, start_row in starts.iterrows():
         if start_date < last_sweep_date:
             continue
@@ -100,12 +102,12 @@ def confirmed_low_weak_low(df):
                 if not analysis_range.empty:
                     range_min = analysis_range['Low'].min()
                     range_min_date = analysis_range['Low'].idxmin()
-                    
-                    if (range_min < last_min_confirmed_low):
-                        data.loc[range_min_date,'confirmed_ll']=range_min
-
+                    data.loc[range_min_date,'confirmed_ll']=range_min 
                     last_sweep_date = end_date
                     found_valid_sweep = True
+                    if(range_min < last_min_confirmed_low):
+                        data.loc[range_min_date,'major_confirmed_low']=range_min
+                        last_min_confirmed_low=range_min
                     break 
 
         if not found_valid_sweep:
@@ -205,7 +207,7 @@ def filter_choch(df):
 def filter_bos(df):
     filtered_bos=df[df['is_bos']==True]
     filtered_bos=filtered_bos.drop_duplicates(subset=['active_ll'],keep='first')
-    confirmed_df = df[df['confirmed_ll'].notna()]
+    confirmed_df = df[df['major_confirmed_low'].notna()]
     filter_bos_price = None
     filtered_bos_date = None
     
@@ -219,14 +221,14 @@ def filter_bos(df):
 
 @st.cache_data(ttl=24*3600)
 def filter_ll(df):
-    confirmed_df = df[df['confirmed_ll'].notna()]
+    confirmed_df = df[df['major_confirmed_low'].notna()]
     if confirmed_df.empty:
         weak_df = df[df['weak_ll'].notna()]
         if not weak_df.empty:
             return weak_df['weak_ll'].iloc[-1], weak_df.index[-1], "Weak"
         return None, None, None
 
-    last_confirmed_ll = confirmed_df['confirmed_ll'].iloc[-1]
+    last_confirmed_ll = confirmed_df['major_confirmed_low'].iloc[-1]
     last_confirmed_date = confirmed_df.index[-1]
 
     bos_df = df[df['is_bos'] == True]
