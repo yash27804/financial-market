@@ -38,7 +38,9 @@ def fetch_data(ticker,timeframe):
     data.index=data.index.sort_values(ascending=True)
     
     data.index=pd.to_datetime(data.index).tz_localize(None) 
-    data=data[data['Volume']!=0]
+    
+    data=data[data['Volume'].notna()]
+    data=data[data['Volume']!=0] # Cleaned up zero volume
     data[['Open','Close','High','Low']]=data[['Open','Close','High','Low']].round(2)
     st.dataframe(data)
     return data
@@ -55,8 +57,9 @@ def find_smc(data):
     df['signal'] = df['is_break_candle'] & df['any_recent_sweep']
     
     df=confirmed_low_weak_low(df)
-    temp_min=df['confirmed_ll'].ffill()
-    df['active_ll']=temp_min.cummin()
+    
+    
+    df['active_ll']=df['confirmed_ll'].ffill()
     df['is_bos'] = (df['Close'] < df['active_ll']) & (df['active_ll'].notna())
     
     df=choch(df)
@@ -74,8 +77,10 @@ def confirmed_low_weak_low(df):
     last_sweep_date = pd.Timestamp.min
     data['confirmed_ll'] = np.nan
     data['weak_ll'] = np.nan
-    data['major_confirmed_low']=np.nan
-    last_min_confirmed_low=data['High'].max()
+    
+   
+    last_min_confirmed_low=data.iloc[:,df.columns.get_loc('High')].max()
+    
     for start_date, start_row in starts.iterrows():
         if start_date < last_sweep_date:
             continue
@@ -87,12 +92,10 @@ def confirmed_low_weak_low(df):
         ind_val = window['High'].max()
      
         valid_ends = ends[(ends.index > start_date) & (ends['High'] > ind_val)]
-        
         found_valid_sweep = False
 
         if not valid_ends.empty:
             for end_date, end_row in valid_ends.iterrows():
-                
                 newer_signals = starts[(starts.index > start_date) & (starts.index < end_date)]
                 
                 if not newer_signals.empty:
@@ -102,16 +105,15 @@ def confirmed_low_weak_low(df):
                 if not analysis_range.empty:
                     range_min = analysis_range['Low'].min()
                     range_min_date = analysis_range['Low'].idxmin()
-                    data.loc[range_min_date,'confirmed_ll']=range_min 
+                    
+                    if (range_min < last_min_confirmed_low):
+                        data.loc[range_min_date,'confirmed_ll']=range_min
+
                     last_sweep_date = end_date
                     found_valid_sweep = True
-                    if(range_min < last_min_confirmed_low):
-                        data.loc[range_min_date,'major_confirmed_low']=range_min
-                        last_min_confirmed_low=range_min
                     break 
 
         if not found_valid_sweep:
-            
             next_signals = starts[starts.index > start_date]
             if next_signals.empty and ind_date > last_sweep_date:
                 active_range = data.loc[ind_date:]
@@ -126,62 +128,46 @@ def confirmed_low_weak_low(df):
 def filter_ind(df):
     inducement_price = None
     inducement_date = None
-    
-    if 'choch' in df.columns:
-        choch_rows = df[df['choch'].notna()]
-        if not choch_rows.empty:
-            last_choch_price = choch_rows['choch'].iloc[-1]
-            last_choch_date = choch_rows.index[-1]
-            
-            subsequent_data = df.loc[last_choch_date:]
-            choch_broken = subsequent_data[subsequent_data['Close'] > last_choch_price]
-            
-            if not choch_broken.empty:
-                first_break_date = choch_broken.index[0]
-                bos_after_break = df[(df['is_bos'] == True) & (df.index > first_break_date)]
-                
-                if bos_after_break.empty:
-                    return None, None
-
-    df_filtered = df[df['signal'] == True]
+    df_filtered=df[df['signal']==True]
     
     if not df_filtered.empty:
-        last_inducement = df_filtered.index[-1]
+        last_inducement=df_filtered.index[-1]
         try:
-            loc = df.index.get_loc(last_inducement)
-            start_loc = max(0, loc - 4)
-            candle_range = df.iloc[start_loc : loc + 1]
-            inducement_price = candle_range['High'].max()
-            inducement_date = candle_range['High'].idxmax()
-         
+            loc=df.index.get_loc(last_inducement)
+            start_loc=max(0,loc-4)
+            candle_range=df.iloc[start_loc:loc+1]
+            inducement_price=candle_range['High'].max()
+            inducement_date=candle_range['High'].idxmax()
         except KeyError:
             pass
-    
-    return inducement_price, inducement_date
+    return inducement_price,inducement_date
 
 @st.cache_data(ttl=24*3600)
 def choch(df):
+    
     data=df.copy()
-    data['choch'] = np.nan 
+    data['choch'] = np.nan
+    
     bos_filtered=df[df['is_bos']==True]
     if bos_filtered.empty:
         return data
         
     last_bos_date=bos_filtered.index[-1]
-    confirmed_date_filter=df[df['confirmed_ll'].notna()]
     
+    confirmed_date_filter=df[df['confirmed_ll'].notna()]
     if confirmed_date_filter.empty:
         return data
-
+        
     confirmed_date_filter['is_before_bos']=confirmed_date_filter.index<last_bos_date
     confirmed_date_filter=confirmed_date_filter[confirmed_date_filter['is_before_bos']==True]
     
     if confirmed_date_filter.empty:
         return data
         
-    start_index=confirmed_date_filter.index[-1]
+    start_index=confirmed_date_filter.index[-1] 
     candle_high_price=df.loc[start_index:last_bos_date]['High'].max()
     candle_high_date=df.loc[start_index:last_bos_date]['High'].idxmax()
+    
     if pd.notna(candle_high_price) and pd.notna(candle_high_date):
         data.loc[candle_high_date,'choch']=candle_high_price
     return data
@@ -207,7 +193,8 @@ def filter_choch(df):
 def filter_bos(df):
     filtered_bos=df[df['is_bos']==True]
     filtered_bos=filtered_bos.drop_duplicates(subset=['active_ll'],keep='first')
-    confirmed_df = df[df['major_confirmed_low'].notna()]
+    confirmed_df = df[df['confirmed_ll'].notna()]
+    
     filter_bos_price = None
     filtered_bos_date = None
     
@@ -221,16 +208,17 @@ def filter_bos(df):
 
 @st.cache_data(ttl=24*3600)
 def filter_ll(df):
-    confirmed_df = df[df['major_confirmed_low'].notna()]
+    
+    confirmed_df = df[df['confirmed_ll'].notna()]
+    
     if confirmed_df.empty:
         weak_df = df[df['weak_ll'].notna()]
         if not weak_df.empty:
             return weak_df['weak_ll'].iloc[-1], weak_df.index[-1], "Weak"
         return None, None, None
 
-    last_confirmed_ll = confirmed_df['major_confirmed_low'].iloc[-1]
-    last_confirmed_date = confirmed_df.index[-1]
-
+    last_confirmed_date_overall = confirmed_df.index[-1]
+    
     bos_df = df[df['is_bos'] == True]
     bos_df=bos_df.drop_duplicates(subset=['active_ll'])
     is_broken = False
@@ -238,10 +226,11 @@ def filter_ll(df):
 
     if not bos_df.empty:
         last_bos_date = bos_df.index[-1]
-        if last_bos_date > last_confirmed_date:
+        if last_bos_date > last_confirmed_date_overall:
             is_broken = True
 
     if is_broken:
+        last_confirmed_ll = confirmed_df['confirmed_ll'].iloc[-1]
         weak_df = df[(df['weak_ll'].notna()) & (df.index >= last_bos_date)]
         if not weak_df.empty:
             recent_data = df.loc[last_bos_date:]
@@ -250,9 +239,20 @@ def filter_ll(df):
                 current_min_date = recent_data['Low'].idxmin()
             
                 if current_min < last_confirmed_ll:
-                     return current_min, current_min_date, "Weak"
+                 return current_min, current_min_date, "Weak"
+        
+        return last_confirmed_ll, last_confirmed_date_overall, "Confirmed"
 
-    return last_confirmed_ll, last_confirmed_date, "Confirmed"
+    
+    current_leg_confirmed = confirmed_df[confirmed_df.index >= last_bos_date]
+    
+    if not current_leg_confirmed.empty:
+       
+        major_ll = current_leg_confirmed['confirmed_ll'].min()
+        major_date = current_leg_confirmed['confirmed_ll'].idxmin()
+        return major_ll, major_date, "Confirmed"
+        
+    return confirmed_df['confirmed_ll'].iloc[-1], confirmed_df.index[-1], "Confirmed"
 
 @st.cache_data(ttl=24*3600)
 def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date, ll_type, bos_price, bos_date,choch_price,choch_date,timeframe):
@@ -288,6 +288,7 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
         x_val = get_x_coord(inducement_date)
         if x_val in data['DateStr'].values:
             
+          
             future_data = data.loc[inducement_date:]
             if len(future_data) > 1:
                 future_highs = future_data.iloc[1:]['High']
@@ -390,10 +391,10 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
                       margin=dict(l=10, r=150, t=10, b=10)) 
     
     fig.update_xaxes(type="category",
-                     categoryorder='trace', 
-                     tickangle=-45,
-                     nticks=20,
-                     tickfont=dict(size=10))
+                      categoryorder='trace', 
+                      tickangle=-45,
+                      nticks=20,
+                      tickfont=dict(size=10))
     st.plotly_chart(fig, config={'scrollZoom': True}, use_container_width=True)
 
 ticker=st.text_input("Enter ticker of Stock:")
