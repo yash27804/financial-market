@@ -40,9 +40,8 @@ def fetch_data(ticker,timeframe):
     data.index=pd.to_datetime(data.index).tz_localize(None) 
     
     data=data[data['Volume'].notna()]
-    data=data[data['Volume']!=0] # Cleaned up zero volume
+    data=data[data['Volume']!=0] 
     data[['Open','Close','High','Low']]=data[['Open','Close','High','Low']].round(2)
-    st.dataframe(data)
     return data
 
 @st.cache_data(ttl=24*3600)
@@ -58,11 +57,22 @@ def find_smc(data):
     
     df=confirmed_low_weak_low(df)
     
-    
     df['active_ll']=df['confirmed_ll'].ffill()
     df['is_bos'] = (df['Close'] < df['active_ll']) & (df['active_ll'].notna())
     
+    df['bos'] = np.nan
+    bos_filtered = df[df['is_bos'] == True].drop_duplicates(subset=['active_ll'], keep='first')
+    
+    for break_date, break_row in bos_filtered.iterrows():
+        broken_price = break_row['active_ll']
+        matching_lows = df[(df['confirmed_ll'] == broken_price) & (df.index < break_date)]
+        if not matching_lows.empty:
+            origin_date = matching_lows.index[-1]
+            df.loc[origin_date, 'bos'] = broken_price
+
     df=choch(df)
+    
+    st.dataframe(df)
     return df
 
 @st.cache_data(ttl=24*3600)
@@ -78,7 +88,6 @@ def confirmed_low_weak_low(df):
     data['confirmed_ll'] = np.nan
     data['weak_ll'] = np.nan
     
-   
     last_min_confirmed_low=data.iloc[:,df.columns.get_loc('High')].max()
     
     for start_date, start_row in starts.iterrows():
@@ -144,71 +153,65 @@ def filter_ind(df):
 
 @st.cache_data(ttl=24*3600)
 def choch(df):
-    
     data=df.copy()
     data['choch'] = np.nan
+    data['active_choch'] = np.nan
+    data['is_choch_broken'] = False
     
-    bos_filtered=df[df['is_bos']==True]
+    bos_filtered=data[data['is_bos']==True].drop_duplicates(subset=['active_ll'], keep='first')
     if bos_filtered.empty:
         return data
         
-    last_bos_date=bos_filtered.index[-1]
-    
-    confirmed_date_filter=df[df['confirmed_ll'].notna()]
-    if confirmed_date_filter.empty:
-        return data
+    for last_bos_date, row in bos_filtered.iterrows():
+        confirmed_date_filter = data[(data['confirmed_ll'].notna()) & (data.index < last_bos_date)]
         
-    confirmed_date_filter['is_before_bos']=confirmed_date_filter.index<last_bos_date
-    confirmed_date_filter=confirmed_date_filter[confirmed_date_filter['is_before_bos']==True]
-    
-    if confirmed_date_filter.empty:
-        return data
+        if confirmed_date_filter.empty:
+            continue
+            
+        start_index = confirmed_date_filter.index[-1] 
+        candle_high_price=data.loc[start_index:last_bos_date]['High'].max()
+        candle_high_date=data.loc[start_index:last_bos_date]['High'].idxmax()
         
-    start_index=confirmed_date_filter.index[-1] 
-    candle_high_price=df.loc[start_index:last_bos_date]['High'].max()
-    candle_high_date=df.loc[start_index:last_bos_date]['High'].idxmax()
+        if pd.notna(candle_high_price) and pd.notna(candle_high_date):
+            data.loc[candle_high_date,'choch']=candle_high_price
+            data.loc[last_bos_date:, 'active_choch'] = candle_high_price
+            
+    active_choch_val = np.nan
+    broken = False
     
-    if pd.notna(candle_high_price) and pd.notna(candle_high_date):
-        data.loc[candle_high_date,'choch']=candle_high_price
+    for i in range(len(data)):
+        curr_choch = data['active_choch'].iloc[i]
+        if pd.notna(curr_choch):
+            if curr_choch != active_choch_val:
+                active_choch_val = curr_choch
+                broken = False
+                
+            if not broken and data['Close'].iloc[i] > active_choch_val:
+                data.iloc[i, data.columns.get_loc('is_choch_broken')] = True
+                broken = True
+                
     return data
 
 @st.cache_data(ttl=24*3600)
 def filter_choch(df):
     if 'choch' not in df.columns:
         return None, None
-        
-    filtered_data=df[df['choch'].notnull()]
+    filtered_data = df[df['choch'].notnull()]
     if filtered_data.empty:
         return None, None
-    choch_price=filtered_data['choch'].iloc[-1]
-    if pd.isna(choch_price):
-        return None,None
-    choch_date=filtered_data.index[-1]
-    if pd.isna(choch_date):
-        return None,None
-    
-    return choch_price, choch_date
+    return filtered_data['choch'].iloc[-1], filtered_data.index[-1]
     
 @st.cache_data(ttl=24*3600)
 def filter_bos(df):
-    filtered_bos=df[df['is_bos']==True]
-    filtered_bos=filtered_bos.drop_duplicates(subset=['active_ll'],keep='first')
-    confirmed_df = df[df['confirmed_ll'].notna()]
-    
-    filter_bos_price = None
-    filtered_bos_date = None
-    
-    if not filtered_bos.empty:
-        prior_confirmed = confirmed_df[confirmed_df.index < filtered_bos.index[-1]]
-        if not prior_confirmed.empty:
-            filtered_bos_date=prior_confirmed.iloc[-1].name
-            filter_bos_price=filtered_bos['active_ll'].iloc[-1]
-            
-    return filter_bos_price,filtered_bos_date
+    if 'bos' not in df.columns:
+        return None, None
+    filtered_data = df[df['bos'].notnull()]
+    if filtered_data.empty:
+        return None, None
+    return filtered_data['bos'].iloc[-1], filtered_data.index[-1]
 
 @st.cache_data(ttl=24*3600)
 def filter_ll(df):
-    
     confirmed_df = df[df['confirmed_ll'].notna()]
     
     if confirmed_df.empty:
@@ -243,11 +246,9 @@ def filter_ll(df):
         
         return last_confirmed_ll, last_confirmed_date_overall, "Confirmed"
 
-    
     current_leg_confirmed = confirmed_df[confirmed_df.index >= last_bos_date]
     
     if not current_leg_confirmed.empty:
-       
         major_ll = current_leg_confirmed['confirmed_ll'].min()
         major_date = current_leg_confirmed['confirmed_ll'].idxmin()
         return major_ll, major_date, "Confirmed"
@@ -287,8 +288,6 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
     if inducement_date and inducement_price:
         x_val = get_x_coord(inducement_date)
         if x_val in data['DateStr'].values:
-            
-          
             future_data = data.loc[inducement_date:]
             if len(future_data) > 1:
                 future_highs = future_data.iloc[1:]['High']
@@ -298,21 +297,8 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
                 
             label_text = f"IND (SWEPT): {inducement_price}" if is_swept else f"IND: {inducement_price}"
 
-            fig.add_shape(type='line',
-                          x0=x_val, 
-                          x1=data['DateStr'].iloc[-1], 
-                          y0=inducement_price, 
-                          y1=inducement_price,
-                          line=dict(color="Red", width=2, dash="dash"))
-            
-            fig.add_annotation(x=data['DateStr'].iloc[-1], 
-                               y=inducement_price, 
-                               text=label_text,
-                               showarrow=False, 
-                               xanchor="left",
-                               xshift=10,
-                               yshift=10, 
-                               font=dict(color="Red", size=17))
+            fig.add_shape(type='line', x0=x_val, x1=data['DateStr'].iloc[-1], y0=inducement_price, y1=inducement_price, line=dict(color="Red", width=2, dash="dash"))
+            fig.add_annotation(x=data['DateStr'].iloc[-1], y=inducement_price, text=label_text, showarrow=False, xanchor="left", xshift=10, yshift=10, font=dict(color="Red", size=17))
 
     if ll_price and ll_date:
         x_val = get_x_coord(ll_date)
@@ -320,81 +306,26 @@ def plot_smc(data, ticker, inducement_price, inducement_date, ll_price, ll_date,
         dash = "solid" if ll_type == "Confirmed" else "dot"
         
         if x_val in data['DateStr'].values:
-            fig.add_shape(type='line', 
-                          x0=x_val, 
-                          x1=data['DateStr'].iloc[-1], 
-                          y0=ll_price, 
-                          y1=ll_price,
-                          line=dict(color=color, width=2, dash=dash))
-            
-            fig.add_annotation(x=data['DateStr'].iloc[-1], 
-                               y=ll_price, 
-                               text=f"LL: {ll_price} ({ll_type})",
-                               showarrow=False, 
-                               xanchor="left",
-                               xshift=10,
-                               yshift=-10, 
-                               font=dict(color=color, size=17))
+            fig.add_shape(type='line', x0=x_val, x1=data['DateStr'].iloc[-1], y0=ll_price, y1=ll_price, line=dict(color=color, width=2, dash=dash))
+            fig.add_annotation(x=data['DateStr'].iloc[-1], y=ll_price, text=f"LL: {ll_price} ({ll_type})", showarrow=False, xanchor="left", xshift=10, yshift=-10, font=dict(color=color, size=17))
 
     if choch_price and choch_date:
         x_val = get_x_coord(choch_date)
         if x_val in data['DateStr'].values:
-            fig.add_shape(
-                type='line',
-                x0=x_val,
-                y0=choch_price,
-                x1=data['DateStr'].iloc[-1],
-                y1=choch_price,
-                line=dict(color='Brown',dash="solid",width=3),
-            )
-            fig.add_annotation(
-                x=data['DateStr'].iloc[-1],
-                y=choch_price,
-                yanchor="top",
-                yshift=20,
-                text=f"CHocH Price:{choch_price}",
-                xanchor="left",
-                xshift=-10,
-                showarrow=False,
-                font=dict(color="Brown",size=17)
-            )
+            fig.add_shape(type='line', x0=x_val, y0=choch_price, x1=data['DateStr'].iloc[-1], y1=choch_price, line=dict(color='Brown',dash="solid",width=3))
+            fig.add_annotation(x=data['DateStr'].iloc[-1], y=choch_price, yanchor="top", yshift=20, text=f"CHocH Price:{choch_price}", xanchor="left", xshift=-10, showarrow=False, font=dict(color="Brown",size=17))
 
     if bos_price and bos_date:
         try:
             bos_idx = data.index.get_loc(bos_date)
             x_start = data['DateStr'].iloc[bos_idx]
-            
-            fig.add_shape(type='line', 
-                          x0=x_start, 
-                          x1=data['DateStr'].iloc[-1], 
-                          y0=bos_price, 
-                          y1=bos_price,
-                          line=dict(color="Blue", width=2, dash="solid"))
-            
-            fig.add_annotation(x=data['DateStr'].iloc[-1], 
-                               y=bos_price, 
-                               text=f"BOS:{bos_price}",
-                               showarrow=False, 
-                               xanchor="left", 
-                               xshift=10, 
-                               yshift=10, 
-                               font=dict(color="Blue", size=17))
+            fig.add_shape(type='line', x0=x_start, x1=data['DateStr'].iloc[-1], y0=bos_price, y1=bos_price, line=dict(color="Blue", width=2, dash="solid"))
+            fig.add_annotation(x=data['DateStr'].iloc[-1], y=bos_price, text=f"BOS:{bos_price}", showarrow=False, xanchor="left", xshift=10, yshift=10, font=dict(color="Blue", size=17))
         except:
             pass
 
-    fig.update_layout(height=700, 
-                      template='seaborn', 
-                      xaxis_rangeslider_visible=False,
-                      yaxis=dict(fixedrange=False, side='right'), 
-                      dragmode='pan', 
-                      hovermode='x unified',
-                      margin=dict(l=10, r=150, t=10, b=10)) 
-    
-    fig.update_xaxes(type="category",
-                      categoryorder='trace', 
-                      tickangle=-45,
-                      nticks=20,
-                      tickfont=dict(size=10))
+    fig.update_layout(height=700, template='seaborn', xaxis_rangeslider_visible=False, yaxis=dict(fixedrange=False, side='right'), dragmode='pan', hovermode='x unified', margin=dict(l=10, r=150, t=10, b=10)) 
+    fig.update_xaxes(type="category", categoryorder='trace', tickangle=-45, nticks=20, tickfont=dict(size=10))
     st.plotly_chart(fig, config={'scrollZoom': True}, use_container_width=True)
 
 ticker=st.text_input("Enter ticker of Stock:")
